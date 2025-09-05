@@ -2,8 +2,8 @@
 
 ## 📱 できるようになること
 クラウド上に ClaudeCode 環境を作って、いつでも何処でも ClaudeCode で開発できるようになります。
-<img width="30%" height="1711" alt="Screenshot_20250717-125014~2" src="https://github.com/user-attachments/assets/74c7c098-a7a0-47b0-87b2-20bdc3b63f13" />
-<img width="30%" height="1783" alt="Screenshot_20250717-225940~2" src="https://github.com/user-attachments/assets/315b26c8-543e-45d7-9f84-06c182539492" />
+<img width="30%" alt="Screenshot_20250717-125014~2" src="https://github.com/user-attachments/assets/74c7c098-a7a0-47b0-87b2-20bdc3b63f13" />
+<img width="30%" alt="Screenshot_20250717-225940~2" src="https://github.com/user-attachments/assets/315b26c8-543e-45d7-9f84-06c182539492" />
 
 ## 📋 概要
 
@@ -599,6 +599,18 @@ source ~/.keychain/$(hostname)-sh
 # keychain ~/.ssh/id_rsa_claude_test_key.pem
 # keychain ~/.ssh/my-custom-key.pem
 ```
+
+## 5. おすすめのスマホ用SSHターミナル
+### Termux
+<img width="20%" alt="Screenshot_20250905-135632" src="https://github.com/user-attachments/assets/989e7ef3-d82c-4317-9206-b78e2ed15471" />
+
+#### 特徴
+- Android で日本語のフリック入力が使えるので、日本語入力がしやすい
+- Android だと音声入力ができて非常に快適
+- Tips
+    - sshはデフォルトでは含まれていないので、 `pkg install openssh` でインストール
+    - よく使うサーバーへのSSHは、.bashrc などに１文字コマンドのエイリアスを作成しておくと便利
+
 
 ## 📚 参考資料
 
