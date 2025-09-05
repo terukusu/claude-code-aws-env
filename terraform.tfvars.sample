@@ -1,0 +1,26 @@
+# AWS設定
+aws_region    = "ap-northeast-1"
+instance_type = "t3.medium"
+# key_name = ""  # 空の場合、id_{ssh_key_algorithm}_claude_{environment_name}_keyが自動生成される
+# ssh_key_algorithm = "ed25519"  # デフォルト値、rsa/ecdsa も選択可能
+
+# セキュリティ設定
+ssh_port = 10022
+enable_fail2ban = true
+
+# Git/GitHub設定
+github_username = "YOUR_GITHUB_ID"
+github_email = "YOUR_GITHUB_MAIL"
+
+# 開発で使用する2つのNode.jsバージョン
+node_versions = ["latest", "20.16.0", "22.17.0"]
+default_node_version = "latest"
+
+# Pythonバージョン
+python_versions = ["latest"]
+default_python_version = "latest"
+
+# 環境名（複数環境を作る場合は変更）
+# environment_name = "dev"  # デフォルト値
+# environment_name = "test"
+# environment_name = "project-a"
