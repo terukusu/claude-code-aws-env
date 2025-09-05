@@ -2,8 +2,8 @@
 
 ## 📱 できるようになること
 クラウド上に ClaudeCode 環境を作って、いつでも何処でも ClaudeCode で開発できるようになります。
-<img width="30%" alt="Screenshot_20250717-125014~2" src="https://github.com/user-attachments/assets/74c7c098-a7a0-47b0-87b2-20bdc3b63f13" />
-<img width="30%" alt="Screenshot_20250717-225940~2" src="https://github.com/user-attachments/assets/315b26c8-543e-45d7-9f84-06c182539492" />
+<img width="30%" alt="Screenshot_20250717-125014~2" src="https://github.com/user-attachments/assets/710a0ef4-9207-4c4c-b685-35c2b2fa85c7" />
+<img width="30%" alt="Screenshot_20250717-225940~2" src="https://github.com/user-attachments/assets/dc5028d4-1374-4c72-9c2d-01e6e0c79180" />
 
 ## 📋 概要
 
