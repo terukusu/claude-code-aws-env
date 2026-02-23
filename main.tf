@@ -124,7 +124,7 @@ timedatectl set-timezone Asia/Tokyo
 echo "Locale and timezone configured for Japan"
 
 # 基本ツールとufwのインストール（最優先）
-apt-get install -y curl wget git vim build-essential ufw fail2ban keychain tmux
+apt-get install -y curl wget git vim build-essential ufw fail2ban keychain tmux jq
 
 # Phase 2: ファイアウォール設定（アプリインストール前）
 echo "Phase 2: Firewall configuration"
