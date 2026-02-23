@@ -256,25 +256,57 @@ github_ssh_setup = "Run GitHub SSH setup: ssh -i ~/.ssh/id_ed25519_claude_dev_ke
 
 ## 🔗 STEP 4: EC2インスタンスへの接続
 
-### 4.1 SSH接続
-※ 接続可能になるまで 3〜5分くらいかかります。セットアップ処理が色々実行されるので
-```bash
-# 出力されたSSHコマンドを使用（デフォルト設定の場合）
-ssh -i ~/.ssh/id_ed25519_claude_dev_key.pem -p 10022 ubuntu@xxx.xxx.xxx.xxx
+`terraform apply` 完了後、EC2インスタンスではuser_dataによるセットアップが自動実行されます。
+**SSH接続が可能になるまで3〜5分かかります。** 以下の流れで状況を確認してください。
 
-# カスタマイズした場合の例
-# ssh -i ~/.ssh/id_rsa_claude_test_key.pem -p 10022 ubuntu@xxx.xxx.xxx.xxx
-# ssh -i ~/.ssh/my-custom-key.pem -p 10022 ubuntu@xxx.xxx.xxx.xxx
+### 4.1 セットアップの流れと所要時間
+
+```
+terraform apply 完了
+  │
+  ├─ [0〜1分] OS起動・パッケージ更新
+  ├─ [1〜2分] UFW・SSHポート変更・fail2ban設定
+  │           ← ここでSSHポートが10022に切り替わる
+  ├─ [2〜4分] mise・Node.js・Python・Claude Codeインストール
+  └─ [4〜5分] Git設定・GitHub SSHスクリプト生成
+              ← setup_complete.txt が作成される
 ```
 
-### 4.2 セットアップ状況の確認
+### 4.2 接続を試す
 
 ```bash
-# セットアップ完了を確認
+# terraform apply の出力に表示されたSSHコマンドを使用
+ssh -i ~/.ssh/id_ed25519_claude_dev_key.pem -p 10022 ubuntu@xxx.xxx.xxx.xxx
+```
+
+**接続できない場合の原因と対処：**
+
+| 症状 | 原因 | 対処 |
+|------|------|------|
+| `Connection refused` | SSHポート変更がまだ完了していない | 1〜2分待って再試行 |
+| `Connection timed out` | セキュリティグループの問題 | AWSコンソールでSGを確認 |
+| `Permission denied` | キーペアの不一致 | キー名・パスを確認 |
+
+### 4.3 セットアップ完了の確認
+
+SSH接続できたら、以下のコマンドでセットアップの完了を確認します。
+
+```bash
+# セットアップ完了ファイルを確認
 cat setup_complete.txt
 ```
 
-以下のような出力が表示されれば成功です：
+**まだセットアップ中の場合**（ファイルが存在しない）：
+
+```bash
+# セットアップのリアルタイムログを確認
+sudo tail -f /var/log/user-data.log
+
+# 何がインストール済みか確認
+mise list 2>/dev/null || echo "miseはまだインストールされていません"
+```
+
+**セットアップが完了している場合**、以下のように表示されます：
 
 ```
 Setup completed successfully at [日時]
@@ -284,6 +316,8 @@ Service status check:
 - SSH Port: 10022
 - fail2ban: active
 ```
+
+この表示が確認できたら、STEP 5に進んでください。
 
 ## 🔑 STEP 5: GitHub SSH認証の設定
 
