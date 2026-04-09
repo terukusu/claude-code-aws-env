@@ -328,7 +328,7 @@ tmuxのキーバインド (Ctrl+b がプレフィックス):
   mise list               # インストール済み言語バージョン一覧
   mise use node@18        # Node.jsバージョン切り替え
   mise use python@3.11    # Pythonバージョン切り替え
-  claude-code             # Claude Code開始
+  claude                  # Claude Code開始
 
 【Git便利エイリアス】
   git graph               # ブランチ履歴をグラフで表示
@@ -366,10 +366,10 @@ if command -v keychain >/dev/null 2>&1; then
 fi
 KEYCHAIN_EOF
 
-# npmの設定
-cat >> ~/.bashrc << 'NPM_EOF'
-export PATH=~/.npm-global/bin:$PATH
-NPM_EOF
+# Claude Code (native binary) のパス設定
+cat >> ~/.bashrc << 'CLAUDE_PATH_EOF'
+export PATH=$HOME/.claude/local/bin:$PATH
+CLAUDE_PATH_EOF
 
 # mise環境をアクティベート
 export PATH="$HOME/.local/bin:$PATH"
@@ -393,15 +393,9 @@ mise use --global yarn@latest
 # mise環境を再度アクティベート（確実にパスを通す）
 eval "$(~/.local/bin/mise activate bash)"
 
-# npmの設定
-mkdir -p ~/.npm-global
-npm config set prefix ~/.npm-global
-
-# 環境変数を現在のセッションに適用
-export PATH=~/.npm-global/bin:$PATH
-
-# Claude Codeのインストール
-npm install -g @anthropic-ai/claude-code
+# Claude Codeのインストール (native binary)
+curl -fsSL https://claude.ai/install.sh | bash
+export PATH=$HOME/.claude/local/bin:$PATH
 
 # Git設定
 %{ if var.github_username != "" && var.github_email != "" }
