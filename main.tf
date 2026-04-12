@@ -126,6 +126,18 @@ echo "Locale and timezone configured for Japan"
 # 基本ツールとufwのインストール（最優先）
 apt-get install -y curl wget git vim build-essential ufw fail2ban keychain tmux jq
 
+# スワップ領域の設定（4GB）
+echo "Setting up swap space..."
+fallocate -l 4G /swapfile
+chmod 600 /swapfile
+mkswap /swapfile
+swapon /swapfile
+echo '/swapfile none swap sw 0 0' >> /etc/fstab
+# スワップの使用頻度を下げる（メモリに余裕がある間はなるべくRAMを使う）
+echo 'vm.swappiness=10' >> /etc/sysctl.conf
+sysctl vm.swappiness=10
+echo "Swap configured: 4GB"
+
 # Phase 2: ファイアウォール設定（アプリインストール前）
 echo "Phase 2: Firewall configuration"
 
