@@ -65,6 +65,12 @@ The user_data script automatically installs:
 - `variables.tf`: Variable definitions with validation rules
 - `terraform.tfvars`: Your environment-specific configuration (not in Git)
 - `terraform.tfstate`: Current infrastructure state (sensitive - exclude from Git)
+- `docs/on-demand-cost-optimization.md`: Step-by-step procedure to convert the always-on
+  instance into an on-demand one (idle auto-stop + connect-triggered auto-start).
+  Written for an AI agent to execute directly. Includes a "design decisions" section
+  recording which alternatives (ECS/Fargate, terminate-and-recreate, Graviton, Spot,
+  hibernation) were evaluated and rejected, with the measured pricing behind each call.
+  **Read that section before proposing a different architecture.**
 
 ## Multiple Environment Support
 
