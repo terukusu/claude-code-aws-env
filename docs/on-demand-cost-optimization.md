@@ -532,7 +532,7 @@ DEV_PORT=10022
 DEV_REGION=ap-northeast-1
 DEV_CRED=~/.aws_devstart
 DEV_TMUX=claude              # tmux セッション名
-DEV_DIR=~/workspace          # tmux 新規作成時の開始ディレクトリ（user_data が作る初期フォルダ）
+DEV_DIR=/home/ubuntu/workspace   # tmux 新規作成時の開始ディレクトリ。**絶対パスで書くこと**（下記参照）
 
 # ssh の後ろに書く内容をそのまま。~/.ssh/config に Host 定義があるなら "myhost" だけでよい
 DEV_SSH="-i $HOME/.ssh/<your-key> -p 10022 ubuntu@<Elastic IP>"
@@ -592,6 +592,20 @@ d() {
 
 関数名は好みで構いません。実運用では1文字の `d` にしています。
 既存の接続用エイリアス（`~/bin/c` など）があるなら、それを置き換える形になります。
+
+**`DEV_DIR` は必ず絶対パスで書いてください。** `DEV_DIR=~/workspace` と書くと、
+bash は変数代入の右辺でチルダ展開を行うため、**手元の端末側のホームパス**が入ります。
+Termux なら `/data/data/com.termux/files/home/workspace` になり、それがそのまま
+`tmux new -c` に渡ります。リモートに存在しないパスなので tmux は黙ってホームで起動し、
+一見動いているのに開始ディレクトリだけ違う、という分かりにくい壊れ方をします。
+
+確認方法:
+
+```bash
+ssh "$SSH_HOST" "tmux list-sessions -F '#{session_name} #{session_path}'"
+```
+
+`session_path` が端末側のパスになっていたらこの罠を踏んでいます。
 
 `-c $DEV_DIR` は**新規セッション作成時のみ**効きます。既存セッションにアタッチする場合は、
 各ペインの現在ディレクトリがそのまま維持されます。
@@ -730,3 +744,4 @@ resume が実際に効くのは別の箇所です。アイドル判定を誤っ�
 | バックアップが実行されない | `Persistent=true` が無い | オンデマンド運用では必須 |
 | `origin` 無しリポジトリの設定ファイルが復元できない | `--exclude-standard` が gitignore 対象を除外した | 本手順のとおり全ツリー退避にする |
 | 起動できない（`InvalidInstanceID.NotFound`） | `DEV_INSTANCE` の値が古い | インスタンスを作り直した場合は ID とポリシーの ARN を更新する |
+| tmux が意図したディレクトリで始まらない | `DEV_DIR=~/...` と書いて手元の端末側でチルダ展開された | `DEV_DIR` を絶対パスにする。`tmux list-sessions -F '#{session_path}'` で確認できる |
