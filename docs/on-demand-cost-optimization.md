@@ -342,7 +342,8 @@ SSH が異常切断すると tmux クライアントが張り付いたまま残�
 | tmux クライアント活動 | `tmux list-clients -F '#{client_activity}'` | 対話操作の検出 |
 | tmux セッション活動 | `tmux list-sessions -F '#{session_activity}'` | デタッチ中の出力検出 |
 | Claude Code の会話記録 | `~/.claude/projects/**/*.jsonl` の mtime | エージェント動作の検出 |
-| 各 tty の**入力** | `/dev/pts/*` の **atime のみ** | SSH セッションでの人間の在席。**mtime は使わない** |
+| クライアント tty | `atime` のみ | SSH セッションでの人間の在席。**mtime はステータスバーで汚染される** |
+| ペイン tty | `atime` と `mtime` | ペイン内で走る処理の活動。**長時間の自動処理を守る** |
 | load average | `/proc/loadavg` | **停止の抑止**（ビルド中を殺さない） |
 
 ### 3.1 スクリプト配置
@@ -376,12 +377,21 @@ fi
 j=$(find "/home/$OWNER/.claude/projects" -name '*.jsonl' -printf '%T@\n' 2>/dev/null | sort -n | tail -1)
 note "claude jsonl" "${j%.*}"
 
+# ペイン tty の一覧（クライアント tty と区別するため）
+PANE_TTYS=$(runuser -u "$OWNER" -- tmux list-panes -a -F '#{pane_tty}' 2>/dev/null)
+
 for p in /dev/pts/*; do
   [ -c "$p" ] || continue
   case "$p" in */ptmx) continue;; esac
-  # atime のみを見る。mtime を混ぜてはいけない（理由は本節末尾）
+  # tty は2種類あり mtime の意味が違う（理由は本節末尾）
   a=$(stat -c %X "$p" 2>/dev/null)
-  note "tty $(basename "$p") atime" "$a"
+  if printf '%s\n' "$PANE_TTYS" | grep -qx "$p"; then
+    m=$(stat -c %Y "$p" 2>/dev/null)
+    [ "${m:-0}" -gt "${a:-0}" ] 2>/dev/null && a="$m"
+    note "pane $(basename "$p")" "$a"
+  else
+    note "tty $(basename "$p") atime" "$a"
+  fi
 done
 
 idle=$(( now - last ))
@@ -411,29 +421,45 @@ IDLE
 ssh "$SSH_HOST" 'sudo chmod 755 /usr/local/bin/devbox-idle-check.sh && bash -n /usr/local/bin/devbox-idle-check.sh'
 ```
 
-#### なぜ pty は atime だけを見るのか
+#### tty は2種類ある。どちらを混同しても壊れる
 
-**この構成で最も踏みやすい罠です。** `max(atime, mtime)` にしてはいけません。
+**この構成で最も踏みやすい罠です。** tmux を使うと tty が2種類でき、
+`mtime` の意味がそれぞれ違います。
 
-| | 更新契機 | アイドル判定での意味 |
-|---|---|---|
-| `atime` | 端末**からの入力**を読んだとき | 人間が打鍵した = 在席している |
-| `mtime` | 端末**への出力**が書かれたとき | プログラムが何か表示した（人間とは無関係） |
+| | 何の tty か | mtime が動く契機 | 扱い |
+|---|---|---|---|
+| クライアント tty | SSH セッション側 | **tmux のステータスバー再描画**（既定 `status-interval 15`） | **mtime は使えない**。atime だけ見る |
+| ペイン tty | tmux ペインの中身 | ペイン内のプログラムが書いたとき | **mtime も見る**。長時間の自動処理を拾う |
 
-tmux の中で TUI アプリ（Claude Code、`top`、`htop` など）を常駐させると、
-**画面の定期再描画で mtime が更新され続けます**。mtime を混ぜると「最終活動」が
-永久に「今」を指し、**アイドル判定は二度と成立しません**。
-
-実測例（287秒間まったく入力していない状態）:
+実測（`claude` がアイドルで待機中、287秒間 無入力）:
 
 ```
-/dev/pts/0   atime=287s前 (入力なし)   mtime=7s前 (再描画による出力)
+/dev/pts/0 (client)  atime=287s前   mtime=  7s前   ← ステータスバーが15秒毎に更新
+/dev/pts/2 (pane)    atime=287s前   mtime=167s前   ← 更新されない
 ```
 
-しかも**タイムアウトが起きないので何のエラーも出ません**。インスタンスは静かに
-動き続け、保険（3.4）が発火して初めて止まります。「アイドル停止が効いている」と
-思い込んだまま課金され続けるため、**必ず 3.2 のドライランで各シグナルの実測値を
-確認してください**。長時間放置したあとに `tty ... atime` が古い値になっていれば正常です。
+同じ構成で `claude` が作業中:
+
+```
+/dev/pts/0 (client)  atime= 95s前   mtime=  1s前
+/dev/pts/2 (pane)    ...            mtime=  7s前   ← 働いている間だけ新しい
+```
+
+**両方向の間違いがあります。**
+
+- **クライアント tty の mtime を混ぜる** → ステータスバーで常に「今」になり、
+  **アイドル判定が永久に成立しません**。インスタンスは静かに動き続け、
+  保険（3.4）が発火して初めて止まります
+- **ペイン tty の mtime を捨てる** → キー入力を伴わない長時間の自動処理
+  （AI エージェントの実行、長いツール呼び出し）を「無活動」と誤判定し、
+  **作業中に停止させます**
+
+`load average` の閾値は CPU を使う処理しか守れません。ネットワーク待ちのような
+低負荷の待機は、ペイン tty の mtime でしか拾えません。
+
+**どちらの壊れ方もエラーを出しません。** 前者は課金が続くだけ、後者は作業が飛ぶだけで、
+ログには異常が残りません。必ず 3.2 のドライランで、クライアントとペインが別々に
+表示されることを確認してください。
 
 なお tmux の `client_activity` / `session_activity` は再描画では更新されないため、
 そのまま使えます（実測で確認済み）。
@@ -865,4 +891,5 @@ resume が実際に効くのは別の箇所です。アイドル判定を誤っ�
 | 起動できない（`InvalidInstanceID.NotFound`） | `DEV_INSTANCE` の値が古い | インスタンスを作り直した場合は ID とポリシーの ARN を更新する |
 | tmux が意図したディレクトリで始まらない | `DEV_DIR=~/...` と書いて手元の端末側でチルダ展開された | `DEV_DIR` を絶対パスにする。`tmux list-sessions -F '#{session_path}'` で確認できる |
 | 保険の日次停止が発火しない | スケジューラ用ロールの権限不足やターゲット定義の誤り。**静かに失敗する** | 一時スケジュールで実発火を確認する（3.4） |
-| **アイドル停止が永久に発火しない** | pty の `mtime` をシグナルに混ぜた。tmux 内の TUI の再描画で常時更新されるため | `atime` のみを使う（3.1）。`journalctl -u devbox-idle` の判定が常に「閾値未満」なら該当 |
+| **アイドル停止が永久に発火しない** | **クライアント** tty の `mtime` を混ぜた。tmux のステータスバー再描画で常時更新される | クライアント tty は `atime` のみ（3.1） |
+| **作業中に停止される** | **ペイン** tty の `mtime` を捨てた。キー入力を伴わない長時間の自動処理を拾えない | ペイン tty は `mtime` も見る（3.1）。`load` 閾値だけでは低負荷の待機を守れない |
