@@ -17,6 +17,16 @@ variable "instance_type" {
   }
 }
 
+variable "root_volume_size" {
+  description = "Root EBS volume size in GB. 30 is enough for a fresh setup, but a working environment with several repositories, node_modules and container images fills it quickly"
+  type        = number
+  default     = 50
+  validation {
+    condition     = var.root_volume_size >= 30 && var.root_volume_size <= 1000
+    error_message = "Root volume size must be between 30 and 1000 GB."
+  }
+}
+
 variable "key_name" {
   description = "Name of the AWS key pair for SSH access. Leave empty to auto-generate from environment_name"
   type        = string
