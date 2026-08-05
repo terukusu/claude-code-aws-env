@@ -342,7 +342,7 @@ SSH が異常切断すると tmux クライアントが張り付いたまま残�
 | tmux クライアント活動 | `tmux list-clients -F '#{client_activity}'` | 対話操作の検出 |
 | tmux セッション活動 | `tmux list-sessions -F '#{session_activity}'` | デタッチ中の出力検出 |
 | Claude Code の会話記録 | `~/.claude/projects/**/*.jsonl` の mtime | エージェント動作の検出 |
-| 各 tty の入出力 | `/dev/pts/*` の atime/mtime | SSH セッションの活動 |
+| 各 tty の**入力** | `/dev/pts/*` の **atime のみ** | SSH セッションでの人間の在席。**mtime は使わない** |
 | load average | `/proc/loadavg` | **停止の抑止**（ビルド中を殺さない） |
 
 ### 3.1 スクリプト配置
@@ -379,8 +379,9 @@ note "claude jsonl" "${j%.*}"
 for p in /dev/pts/*; do
   [ -c "$p" ] || continue
   case "$p" in */ptmx) continue;; esac
-  a=$(stat -c %X "$p" 2>/dev/null); m=$(stat -c %Y "$p" 2>/dev/null)
-  [ "${a:-0}" -gt "${m:-0}" ] 2>/dev/null && note "tty $(basename "$p")" "$a" || note "tty $(basename "$p")" "$m"
+  # atime のみを見る。mtime を混ぜてはいけない（理由は本節末尾）
+  a=$(stat -c %X "$p" 2>/dev/null)
+  note "tty $(basename "$p") atime" "$a"
 done
 
 idle=$(( now - last ))
@@ -409,6 +410,33 @@ IDLE
 
 ssh "$SSH_HOST" 'sudo chmod 755 /usr/local/bin/devbox-idle-check.sh && bash -n /usr/local/bin/devbox-idle-check.sh'
 ```
+
+#### なぜ pty は atime だけを見るのか
+
+**この構成で最も踏みやすい罠です。** `max(atime, mtime)` にしてはいけません。
+
+| | 更新契機 | アイドル判定での意味 |
+|---|---|---|
+| `atime` | 端末**からの入力**を読んだとき | 人間が打鍵した = 在席している |
+| `mtime` | 端末**への出力**が書かれたとき | プログラムが何か表示した（人間とは無関係） |
+
+tmux の中で TUI アプリ（Claude Code、`top`、`htop` など）を常駐させると、
+**画面の定期再描画で mtime が更新され続けます**。mtime を混ぜると「最終活動」が
+永久に「今」を指し、**アイドル判定は二度と成立しません**。
+
+実測例（287秒間まったく入力していない状態）:
+
+```
+/dev/pts/0   atime=287s前 (入力なし)   mtime=7s前 (再描画による出力)
+```
+
+しかも**タイムアウトが起きないので何のエラーも出ません**。インスタンスは静かに
+動き続け、保険（3.4）が発火して初めて止まります。「アイドル停止が効いている」と
+思い込んだまま課金され続けるため、**必ず 3.2 のドライランで各シグナルの実測値を
+確認してください**。長時間放置したあとに `tty ... atime` が古い値になっていれば正常です。
+
+なお tmux の `client_activity` / `session_activity` は再描画では更新されないため、
+そのまま使えます（実測で確認済み）。
 
 ### 3.2 ドライランで検証（必須）
 
@@ -837,3 +865,4 @@ resume が実際に効くのは別の箇所です。アイドル判定を誤っ�
 | 起動できない（`InvalidInstanceID.NotFound`） | `DEV_INSTANCE` の値が古い | インスタンスを作り直した場合は ID とポリシーの ARN を更新する |
 | tmux が意図したディレクトリで始まらない | `DEV_DIR=~/...` と書いて手元の端末側でチルダ展開された | `DEV_DIR` を絶対パスにする。`tmux list-sessions -F '#{session_path}'` で確認できる |
 | 保険の日次停止が発火しない | スケジューラ用ロールの権限不足やターゲット定義の誤り。**静かに失敗する** | 一時スケジュールで実発火を確認する（3.4） |
+| **アイドル停止が永久に発火しない** | pty の `mtime` をシグナルに混ぜた。tmux 内の TUI の再描画で常時更新されるため | `atime` のみを使う（3.1）。`journalctl -u devbox-idle` の判定が常に「閾値未満」なら該当 |
