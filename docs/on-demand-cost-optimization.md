@@ -15,6 +15,16 @@ AI エージェントが上から順に実行できるよう、判断基準・�
 
 削減の内訳は後述の「コスト根拠」を参照。
 
+停止は二段構えにします。
+
+| | 仕組み | 発火条件 | 役割 |
+|---|---|---|---|
+| 主 | インスタンス内の systemd timer | 30分無活動 かつ load が低い。停止前にバックアップ | 通常はこれだけで止まる |
+| 保険 | EventBridge Scheduler | 毎日決まった時刻に無条件 | **主機構そのものが壊れた場合**を拾う |
+
+主機構はインスタンス内部で動くため、それ自体が壊れると誰も止められません。
+外部の保険はそこだけを守ります。
+
 ## 前提
 
 - 本リポジトリの `terraform apply` が完了し、インスタンスが稼働していること
@@ -463,6 +473,82 @@ EOF
 
 ---
 
+### 3.4 最後の砦（EventBridge Scheduler）
+
+3.3 のアイドル検知は**インスタンス内部で動きます**。したがって、systemd の不調・
+ディスク逼迫・スクリプトの破損などで検知そのものが止まると、誰もインスタンスを
+停止できません。これを拾えるのは外部の仕組みだけです。
+
+EventBridge Scheduler で、無条件の日次停止を保険として置きます。
+
+**ロールは停止専用・対象1台に絞ること。** AWS コンソールのウィザードで作ると
+`AmazonEC2FullAccess` が付くことがありますが、この用途には過剰です
+（terminate を含む EC2 全操作が可能になります）。
+
+```bash
+SCHED_ROLE="claude-code-${ENV_NAME}-scheduler-role"
+
+aws iam create-role --role-name "$SCHED_ROLE" \
+  --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"scheduler.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
+
+aws iam put-role-policy --role-name "$SCHED_ROLE" --policy-name stop-only \
+  --policy-document "{
+    \"Version\": \"2012-10-17\",
+    \"Statement\": [{
+      \"Effect\": \"Allow\",
+      \"Action\": \"ec2:StopInstances\",
+      \"Resource\": \"arn:aws:ec2:${AWS_REGION}:${ACCOUNT_ID}:instance/${INSTANCE_ID}\"
+    }]
+  }"
+
+SCHED_ROLE_ARN=$(aws iam get-role --role-name "$SCHED_ROLE" --query 'Role.Arn' --output text)
+sleep 10   # ロール伝播待ち
+```
+
+これで起動用（4.1）と停止用が対称になります。**どちらも対象は1台、片方は起動のみ、
+もう片方は停止のみ**です。
+
+続けてスケジュールを作ります。時刻は自分の生活時間に合わせてください。
+
+```bash
+aws scheduler create-schedule --name "claude-code-${ENV_NAME}-backstop" \
+  --schedule-expression 'cron(0 2 * * ? *)' \
+  --schedule-expression-timezone 'Asia/Tokyo' \
+  --flexible-time-window Mode=OFF \
+  --description 'Last-resort backstop. Primary stop is the in-instance idle detector.' \
+  --target "{
+    \"Arn\": \"arn:aws:scheduler:::aws-sdk:ec2:stopInstances\",
+    \"RoleArn\": \"${SCHED_ROLE_ARN}\",
+    \"Input\": \"{\\\"InstanceIds\\\":[\\\"${INSTANCE_ID}\\\"]}\",
+    \"RetryPolicy\": {\"MaximumEventAgeInSeconds\": 86400, \"MaximumRetryAttempts\": 0}
+  }"
+```
+
+**保険が実際に効くか必ず確認してください。** 権限不足やターゲット定義の誤りがあると
+**静かに失敗**し、「保険がある」と思い込んだまま常時起動が続きます。これは保険が
+無いことより悪い状態です。数分後に発火する一時スケジュールを作って検証し、
+確認後に削除するのが確実です。
+
+```bash
+# 例: 5分後に一度だけ発火させて、インスタンスが stopped になるか見る
+aws scheduler create-schedule --name tmp-backstop-test \
+  --schedule-expression "at($(date -u -d '+5 minutes' +%Y-%m-%dT%H:%M:%S))" \
+  --flexible-time-window Mode=OFF \
+  --target "{...上と同じ...}"
+
+# 確認後
+aws scheduler delete-schedule --name tmp-backstop-test
+```
+
+**課金**: EventBridge Scheduler は月1400万実行まで無料枠のため、日次実行では発生しません。
+実績でも8ヶ月にわたり `CloudWatch Events` の課金額は $0 でした。
+
+**トレードオフ**: 無条件停止なので、その時刻に作業していれば落とされます。
+ただし復帰は「起動コマンド + 約40秒 + `claude --continue`」で済むため、
+巻き込まれたときの損失は小さく抑えられています。
+
+---
+
 ## 4. 起動トリガー
 
 自動停止を入れたので、次は**使いたいときに起動する手段**が必要です。
@@ -716,10 +802,15 @@ resume が実際に効くのは別の箇所です。アイドル判定を誤っ�
 復帰コストが「1コマンド + 40秒 + `claude --continue`」で済むため、
 **閾値を短く設定できる**という点で価値があります。
 
-### 固定時刻での自動停止 — 見送り
+### 固定時刻での自動停止 — 主機構としては却下、保険としては採用
 
 `cron(0 2 * * ? *)` のような固定時刻停止は実装が簡単ですが、
-利用時間が不定期な場合、作業中に落とします。アイドル検知で置き換えるべきです。
+利用時間が不定期な場合、作業中に落とします。**主たる停止機構にはできません。**
+
+一方で、保険としては価値があります。アイドル検知はインスタンス内部で動くため、
+**その仕組み自体が壊れた場合（systemd の不調、ディスク逼迫、スクリプトの破損）は
+誰も止められません**。これを拾えるのは外部の仕組みだけです。
+詳細は「3.4 最後の砦」を参照してください。
 
 ### Graviton（t4g）移行・ハイバネーション・Spot — 見送り
 
@@ -745,3 +836,4 @@ resume が実際に効くのは別の箇所です。アイドル判定を誤っ�
 | `origin` 無しリポジトリの設定ファイルが復元できない | `--exclude-standard` が gitignore 対象を除外した | 本手順のとおり全ツリー退避にする |
 | 起動できない（`InvalidInstanceID.NotFound`） | `DEV_INSTANCE` の値が古い | インスタンスを作り直した場合は ID とポリシーの ARN を更新する |
 | tmux が意図したディレクトリで始まらない | `DEV_DIR=~/...` と書いて手元の端末側でチルダ展開された | `DEV_DIR` を絶対パスにする。`tmux list-sessions -F '#{session_path}'` で確認できる |
+| 保険の日次停止が発火しない | スケジューラ用ロールの権限不足やターゲット定義の誤り。**静かに失敗する** | 一時スケジュールで実発火を確認する（3.4） |
