@@ -739,7 +739,7 @@ ssh <接続先> cat /path/to/devbox-connect.sh > ~/.devbox-connect.sh
 ```bash
 DEV_INSTANCE=i-xxxxxxxxxxxxxxxxx
 DEV_ADDR=<Elastic IP>
-DEV_PORT=10022
+DEV_PORT=10022                   # terraform の ssh_port と一致させる（後述）
 DEV_REGION=ap-northeast-1
 DEV_TMUX=claude
 DEV_DIR=/home/ubuntu/workspace   # 絶対パス必須（後述）
@@ -754,6 +754,19 @@ DEV_SSH_ARGS=(claude)            # ~/.ssh/config の Host 名
 （`SH_WORD_SPLIT` が既定オフ）、`DEV_SSH="-i key -p 10022 user@host"` のような文字列は
 **引数1個として扱われて壊れます**。bash では単語分割されて動いてしまうので、
 bash で書いたものを zsh に持ち込んだときに初めて表面化します。
+
+**`DEV_PORT` は `terraform.tfvars` の `ssh_port` と一致させてください。** 既定値は
+どちらも 10022 なので、変更していなければ何もしなくて構いません。変更した場合は
+ここも直す必要があります。
+
+```bash
+terraform output -raw ssh_command    # -p の後ろがポート番号
+```
+
+ずれていると、**インスタンスは正常に起動しているのに疎通チェックだけが通らず**、
+`d` が毎回「起動中...」と表示して約2分後にタイムアウトします。起動系の問題に
+見えるため原因に辿り着きにくい部類です。`_dev_up; echo $?` が常に 1 を返すのに
+`aws ec2 describe-instances` は `running` を返す、という組み合わせで判別できます。
 
 **`DEV_DIR` は絶対パスで書いてください。** `~/workspace` と書くと bash は変数代入の
 右辺でチルダ展開を行い、**手元の端末側のホームパス**が入ります。Termux なら
@@ -915,3 +928,4 @@ resume が実際に効くのは別の箇所です。アイドル判定を誤っ�
 | **アイドル停止が永久に発火しない** | **クライアント** tty の `mtime` を混ぜた。tmux のステータスバー再描画で常時更新される | クライアント tty は `atime` のみ（3.1） |
 | **作業中に停止される** | **ペイン** tty の `mtime` を捨てた。キー入力を伴わない長時間の自動処理を拾えない | ペイン tty は `mtime` も見る（3.1）。`load` 閾値だけでは低負荷の待機を守れない |
 | zsh で `ssh` の引数が壊れる | `DEV_SSH` を文字列で持った。**zsh は展開結果を単語分割しない** | `DEV_SSH_ARGS` を配列にする（4.2）。bash では動くため zsh に移して初めて表面化する |
+| インスタンスは running なのに `d` が毎回タイムアウトする | `DEV_PORT` が `terraform.tfvars` の `ssh_port` とずれている | 両者を一致させる（4.2）。`_dev_up` が 1 を返すのに `describe-instances` が `running` なら該当 |
