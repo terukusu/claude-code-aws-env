@@ -59,8 +59,41 @@ AI エージェントが上から順に実行できるよう、判断基準・�
 export AWS_PROFILE=<あなたのプロファイル名>      # 例: default, myaccount
 export AWS_REGION=ap-northeast-1                 # terraform.tfvars の aws_region と合わせる
 export ENV_NAME=dev                              # terraform.tfvars の environment_name と合わせる
-export SSH_HOST=claude                           # ~/.ssh/config の Host 名（無ければ後述の手順で作る）
+export SSH_HOST=claude                           # ~/.ssh/config の Host 名（未作成なら下記で作る）
 ```
+
+### SSH 接続の準備
+
+本書は全編で `ssh "$SSH_HOST"` を使います。`~/.ssh/config` に Host 定義が無い場合は
+先に作ってください。接続情報は `terraform output` から取れます。
+
+```bash
+cd /path/to/terraform/dir
+terraform output -raw ssh_command
+# => ssh -i ~/.ssh/id_ed25519_claude_dev_key.pem -p 10022 ubuntu@xxx.xxx.xxx.xxx
+```
+
+この内容を `~/.ssh/config` に書き写します。
+
+```
+Host claude
+    HostName        <terraform output の IP>
+    Port            10022
+    User            ubuntu
+    IdentityFile    ~/.ssh/<terraform output のキー名>.pem
+    IdentitiesOnly  yes
+```
+
+**`IdentityFile` は実在するファイルを指すこと。** 存在しないパスを書いても
+ssh-agent 経由でたまたま接続できてしまう場合があり、後から原因を追いにくくなります。
+鍵とAWS側キーペアの一致は、フィンガープリントで確認できます。
+
+```bash
+ssh-keygen -lf ~/.ssh/<キー名>.pem
+aws ec2 describe-key-pairs --key-names <キー名> --query 'KeyPairs[].KeyFingerprint' --output text
+```
+
+**検証**: `ssh "$SSH_HOST" 'hostname'` が応答すること。
 
 インスタンスIDは `Name` タグから引きます（`main.tf` が `claude-code-${environment_name}` を付与）。
 
