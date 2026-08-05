@@ -34,7 +34,7 @@ AI エージェントが上から順に実行できるよう、判断基準・�
 | 1. 基盤（EC2・SG・EIP・開発環境一式） | `terraform apply` | 人 or AI |
 | 2. 本書 0〜3章（安全確認・バックアップ・アイドル検知・保険） | 本書 | **AI が単独で実行可能** |
 | 3. 本書 4.1（起動専用 IAM ユーザー） | 本書 | AI が実行。発行したキーの受け渡しは人が判断 |
-| 4. 本書 4.2（スマホ側の設定） | 本書 | **実機が要るため人が実施** |
+| 4. 本書 4.2（PC・スマホの接続コマンド） | 本書 + `scripts/devbox-connect.sh` | PC 側は AI 可。スマホは**実機が要るため人が実施** |
 
 1 の `root_volume_size` は既定 50GB です。30GB でも新規構築は通りますが、
 リポジトリ・`node_modules`・コンテナイメージが積み上がると足りなくなります。
@@ -696,121 +696,93 @@ chmod 600 /tmp/starter-key.json
 aws iam delete-access-key --user-name "$STARTER" --access-key-id <AccessKeyId>
 ```
 
-### 4.2 Termux 側の設定（Android）
+### 4.2 接続コマンドを置く
 
-**`aws-cli` は入れません。** Python 込みで 100MB を超えるためです。
-SigV4 署名は `curl` と `openssl` だけで生成できます（数MB）。
+起動と接続は1つのコマンドにまとめます。**起動を別操作として分離しません。**
+接続しようとする行為そのものが起動要求だからです。
+
+実体は本リポジトリの [`scripts/devbox-connect.sh`](../scripts/devbox-connect.sh) です。
+**手元の PC とスマホで同じファイルを使います。** 環境差はスクリプトの中で吸収します。
+
+| 部分 | PC (macOS/Linux) | スマホ (Termux) |
+|---|---|---|
+| 疎通判定・起動待ち・tmux 接続 | **同一コード** | 同左 |
+| 起動要求 | `aws ec2 start-instances` | `curl` + `openssl` の SigV4 |
+| 資格情報 | `~/.aws` のプロファイル | 4.1 で作った起動専用キー |
+
+`command -v aws` の有無で自動的に切り替わります。スマホに **aws-cli は入れません**。
+Python 込みで 100MB を超えるうえ、必要なのは API 1本だけだからです。
+
+#### 設置
 
 ```bash
-pkg install curl openssl-tool coreutils    # 未導入の場合のみ
+# PC 側
+curl -fsSL <このリポジトリの raw URL>/scripts/devbox-connect.sh -o ~/.devbox-connect.sh
+# または git clone 済みなら
+cp scripts/devbox-connect.sh ~/.devbox-connect.sh
 ```
 
-資格情報を `~/.aws_devstart` に置きます（`chmod 600`）。
+スマホ側は 4.1 の起動専用キーを `~/.aws_devstart`（`chmod 600`）に置き、
+同じファイルを配置します。ローカルネットワーク越しに配るのが面倒なら、
+**踏み台にせず EC2 経由で受け渡す**のが手軽です（`/sdcard` を経由すると
+ストレージ権限を持つ他アプリから読めてしまうため避けます）。
 
-```
-AWS_ACCESS_KEY_ID=AKIA...
-AWS_SECRET_ACCESS_KEY=...
+```bash
+# Termux から
+ssh <接続先> cat /path/to/devbox-connect.sh > ~/.devbox-connect.sh
 ```
 
-`~/.bashrc` に追記します。`DEV_*` の値は自分の環境に合わせてください。
+#### 設定
+
+シェル設定（`~/.zshrc` や `~/.bashrc`）に追記します。
 
 ```bash
 DEV_INSTANCE=i-xxxxxxxxxxxxxxxxx
 DEV_ADDR=<Elastic IP>
 DEV_PORT=10022
 DEV_REGION=ap-northeast-1
-DEV_CRED=~/.aws_devstart
-DEV_TMUX=claude              # tmux セッション名
-DEV_DIR=/home/ubuntu/workspace   # tmux 新規作成時の開始ディレクトリ。**絶対パスで書くこと**（下記参照）
-
-# ssh の後ろに書く内容をそのまま。~/.ssh/config に Host 定義があるなら "myhost" だけでよい
-DEV_SSH="-i $HOME/.ssh/<your-key> -p 10022 ubuntu@<Elastic IP>"
-
-_dev_sha()  { printf '%s' "$1" | openssl dgst -sha256 | sed 's/^.*[ =]//'; }
-_dev_hmac() { printf '%s' "$2" | openssl dgst -sha256 -mac HMAC -macopt "$1" | sed 's/^.*[ =]//'; }
-
-_dev_start() {
-  local AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY   # 関数ローカル。環境変数に漏らさない
-  . "$DEV_CRED" || return 1
-  local host="ec2.${DEV_REGION}.amazonaws.com"
-  local ct="application/x-www-form-urlencoded; charset=utf-8"
-  local d s body scope k sig canon sts
-  d=$(date -u +%Y%m%dT%H%M%SZ); s=${d%%T*}
-  body="Action=StartInstances&Version=2016-11-15&InstanceId.1=${DEV_INSTANCE}"
-  canon="POST
-/
-
-content-type:${ct}
-host:${host}
-x-amz-date:${d}
-
-content-type;host;x-amz-date
-$(_dev_sha "$body")"
-  scope="${s}/${DEV_REGION}/ec2/aws4_request"
-  sts="AWS4-HMAC-SHA256
-${d}
-${scope}
-$(_dev_sha "$canon")"
-  k=$(_dev_hmac "key:AWS4${AWS_SECRET_ACCESS_KEY}" "$s")
-  k=$(_dev_hmac "hexkey:$k" "$DEV_REGION")
-  k=$(_dev_hmac "hexkey:$k" ec2)
-  k=$(_dev_hmac "hexkey:$k" aws4_request)
-  sig=$(_dev_hmac "hexkey:$k" "$sts")
-  curl -sS -X POST "https://${host}/" -H "Content-Type: ${ct}" -H "X-Amz-Date: ${d}" \
-    -H "Authorization: AWS4-HMAC-SHA256 Credential=${AWS_ACCESS_KEY_ID}/${scope}, SignedHeaders=content-type;host;x-amz-date, Signature=${sig}" \
-    --data "$body"
-}
-
-_dev_up() { timeout 3 bash -c "exec 3<>/dev/tcp/${DEV_ADDR}/${DEV_PORT}" 2>/dev/null; }
-
-# d : 停止していれば起動してから繋ぐ。起動済みならそのまま繋ぐ。
-d() {
-  if ! _dev_up; then
-    echo "起動中..."
-    _dev_start >/dev/null || { echo "起動要求に失敗"; return 1; }
-    local i=0
-    until _dev_up; do
-      i=$((i+1)); [ $i -gt 40 ] && { echo "タイムアウト"; return 1; }
-      sleep 3
-    done
-    echo "起動完了"
-  fi
-  ssh $DEV_SSH -t "tmux attach -t $DEV_TMUX || tmux new -s $DEV_TMUX -c $DEV_DIR"
-}
+DEV_TMUX=claude
+DEV_DIR=/home/ubuntu/workspace   # 絶対パス必須（後述）
+DEV_PROFILE=<aws プロファイル名>  # スマホ側は空でよい
+DEV_SSH_ARGS=(claude)            # ~/.ssh/config の Host 名
+# 直接指定する場合:
+# DEV_SSH_ARGS=(-i ~/.ssh/mykey.pem -p 10022 ubuntu@203.0.113.10)
+[ -f ~/.devbox-connect.sh ] && source ~/.devbox-connect.sh
 ```
 
-関数名は好みで構いません。実運用では1文字の `d` にしています。
-既存の接続用エイリアス（`~/bin/c` など）があるなら、それを置き換える形になります。
+**`DEV_SSH_ARGS` は必ず配列にしてください。** zsh は変数展開の結果を単語分割しないため
+（`SH_WORD_SPLIT` が既定オフ）、`DEV_SSH="-i key -p 10022 user@host"` のような文字列は
+**引数1個として扱われて壊れます**。bash では単語分割されて動いてしまうので、
+bash で書いたものを zsh に持ち込んだときに初めて表面化します。
 
-**`DEV_DIR` は必ず絶対パスで書いてください。** `DEV_DIR=~/workspace` と書くと、
-bash は変数代入の右辺でチルダ展開を行うため、**手元の端末側のホームパス**が入ります。
-Termux なら `/data/data/com.termux/files/home/workspace` になり、それがそのまま
-`tmux new -c` に渡ります。リモートに存在しないパスなので tmux は黙ってホームで起動し、
-一見動いているのに開始ディレクトリだけ違う、という分かりにくい壊れ方をします。
+**`DEV_DIR` は絶対パスで書いてください。** `~/workspace` と書くと bash は変数代入の
+右辺でチルダ展開を行い、**手元の端末側のホームパス**が入ります。Termux なら
+`/data/data/com.termux/files/home/workspace` になり、それが `tmux new -c` に渡ります。
+リモートに存在しないパスなので tmux は黙ってホームで起動し、一見動いているのに
+開始ディレクトリだけ違う、という分かりにくい壊れ方をします。
 
-確認方法:
+#### 検証
+
+```bash
+source ~/.zshrc          # または ~/.bashrc
+type d                   # 関数として定義されていること
+
+_dev_up; echo $?         # 0=起動中 / 1=停止中
+_dev_start               # 起動要求が通るか（起動済みでも無害）
+d                        # 起動していれば即接続、停止していれば起動して接続
+```
+
+起動済みのときは**疎通チェックが先に通るため AWS API を叩きません**。
+したがって体感は素の `ssh` と変わらず、停止中のときだけ約40秒待ちます。
+
+`tmux new -c` は**新規セッション作成時のみ**効きます。既存セッションにアタッチする
+場合は各ペインの現在ディレクトリが維持されます。開始ディレクトリの確認はこうします。
 
 ```bash
 ssh "$SSH_HOST" "tmux list-sessions -F '#{session_name} #{session_path}'"
 ```
 
-`session_path` が端末側のパスになっていたらこの罠を踏んでいます。
-
-`-c $DEV_DIR` は**新規セッション作成時のみ**効きます。既存セッションにアタッチする場合は、
-各ペインの現在ディレクトリがそのまま維持されます。
-
-**設計の要点**: 最初に疎通チェックを行い、**起動済みなら AWS API を一切叩きません**。
-したがって起動中の体感は従来と完全に同じで、停止中のときだけ約40秒待ちます。
-「起動」を別操作として分離せず、接続動作そのものをトリガーにしています。
-
-**検証**:
-
-```bash
-_dev_start | head -c 200     # <StartInstancesResponse ...> が返れば署名は正常
-d                            # 起動中なら即接続、停止中なら起動して接続
-```
-
-### 4.3 iOS の場合
+### 4.3 aws-cli も shell も使えない環境（iOS など）
 
 iOS Shortcuts は SigV4 署名（HMAC-SHA256 の連鎖）を実装できません。代替案:
 
@@ -942,3 +914,4 @@ resume が実際に効くのは別の箇所です。アイドル判定を誤っ�
 | 保険の日次停止が発火しない | スケジューラ用ロールの権限不足やターゲット定義の誤り。**静かに失敗する** | 一時スケジュールで実発火を確認する（3.4） |
 | **アイドル停止が永久に発火しない** | **クライアント** tty の `mtime` を混ぜた。tmux のステータスバー再描画で常時更新される | クライアント tty は `atime` のみ（3.1） |
 | **作業中に停止される** | **ペイン** tty の `mtime` を捨てた。キー入力を伴わない長時間の自動処理を拾えない | ペイン tty は `mtime` も見る（3.1）。`load` 閾値だけでは低負荷の待機を守れない |
+| zsh で `ssh` の引数が壊れる | `DEV_SSH` を文字列で持った。**zsh は展開結果を単語分割しない** | `DEV_SSH_ARGS` を配列にする（4.2）。bash では動くため zsh に移して初めて表面化する |
