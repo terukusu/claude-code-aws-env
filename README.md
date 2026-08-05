@@ -19,6 +19,7 @@
 > [オンデマンド化によるコスト最適化](docs/on-demand-cost-optimization.md) を参照してください。
 > 30分無活動で自動停止し、接続時に自動起動する構成に変更できます（月額 約$48 → 約$13）。
 > 打鍵数は変わりません。AIエージェントがそのまま実行できる手順書です。
+> 接続コマンドの実体は [`scripts/devbox-connect.sh`](scripts/devbox-connect.sh)（PC・スマホ共通）。
 
 ## 🛠️ 前提条件
 - Mac
